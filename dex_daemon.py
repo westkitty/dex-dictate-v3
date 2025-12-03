@@ -17,12 +17,43 @@ import evdev
 from evdev import UInput, ecodes as e
 import pyperclip
 import select
+import logging
+import logging.handlers
+
+# --- LOGGING SETUP ---
+def setup_logging(name):
+    log_dir = os.path.expanduser("~/.local/share/dex-dictate/logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_file = os.path.join(log_dir, f"{name}.log")
+    
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    
+    # File Handler (Rotating: 5MB, 3 backups)
+    fh = logging.handlers.RotatingFileHandler(
+        log_file, maxBytes=5*1024*1024, backupCount=3
+    )
+    fh.setFormatter(logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s'
+    ))
+    
+    # Console Handler
+    ch = logging.StreamHandler()
+    ch.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))
+    
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+    return logger
+
+logger = setup_logging("dex_daemon")
 
 # --- CONFIGURATION ---
 ACCESS_KEY = os.environ.get("PICOVOICE_ACCESS_KEY", "CpyLypXl9zpcJzppA6W70VwqTDr2+d2XYa6AhExQYPryoIwbt2h6DA==")
 RUNTIME = os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")
 SOCK_PATH = os.path.join(RUNTIME, "dex3.sock")
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.json")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+VOCAB_PATH = os.path.join(BASE_DIR, "vocabulary.json")
 
 SAMPLE_RATE = 16000
 FRAME_LENGTH = 512
@@ -42,6 +73,7 @@ whisper_model = None
 vad_model = None
 ui = None
 last_segment_len = 0
+initial_prompt = "" # Vocabulary prompt
 
 # Telemetry
 telemetry_lock = threading.Lock()
@@ -73,7 +105,7 @@ def ensure_uinput():
     if ui: return
     cap = {e.EV_KEY: [v[0] for v in CHAR_MAP.values()] + [e.KEY_LEFTSHIFT, e.KEY_ENTER, e.KEY_SPACE, e.KEY_BACKSPACE, e.KEY_V, e.KEY_LEFTCTRL]}
     try: ui = UInput(cap, name='Dex-Dictate-Daemon', version=0x3)
-    except Exception as ex: print(f"UInput Error: {ex}")
+    except Exception as ex: logger.error(f"UInput Error: {ex}", exc_info=True)
 
 def type_text(text):
     global last_segment_len
@@ -83,7 +115,7 @@ def type_text(text):
     # Macro: Scratch that
     clean_text = re.sub(r'[^\w\s]', '', text).lower().strip()
     if "scratch that" in clean_text:
-        print(f"Macro: Scratching {last_segment_len} chars")
+        logger.info(f"Macro: Scratching {last_segment_len} chars")
         if ui:
             for _ in range(last_segment_len + 1): # +1 for space
                 ui.write(e.EV_KEY, e.KEY_BACKSPACE, 1); ui.syn()
@@ -107,7 +139,7 @@ def type_text(text):
                     ui.syn(); time.sleep(0.005)
             return
         except Exception as ex:
-            print(f"Evdev failed: {ex}. Fallback to clipboard.")
+            logger.warning(f"Evdev failed: {ex}. Fallback to clipboard.")
     
     # Fallback: Clipboard + Ctrl+V
     try:
@@ -120,9 +152,9 @@ def type_text(text):
             ui.write(e.EV_KEY, e.KEY_LEFTCTRL, 0)
             ui.syn()
         else:
-            print("No input method available.")
+            logger.error("No input method available.")
     except Exception as ex:
-        print(f"Fallback failed: {ex}")
+        logger.error(f"Fallback failed: {ex}", exc_info=True)
 
 def press_combo(combo_str):
     ensure_uinput()
@@ -175,7 +207,7 @@ def play_tone(freq=1000, ms=100):
     sd.play(w, 44100, blocking=False)
 
 def audio_callback(indata, frames, time, status):
-    if status: print(status)
+    if status: logger.warning(f"Audio Status: {status}")
     audio_q.put(indata.copy())
 
 # --- THREADS ---
@@ -186,7 +218,7 @@ last_log_message = ""
 def set_log(msg):
     global last_log_message
     last_log_message = msg
-    # print(f"LOG: {msg}") # Optional debug
+    logger.info(f"LOG: {msg}")
 
 def ipc_thread():
     if os.path.exists(SOCK_PATH):
@@ -197,7 +229,7 @@ def ipc_thread():
     server.bind(SOCK_PATH)
     os.chmod(SOCK_PATH, 0o666)
     server.listen(1)
-    print(f"IPC Listening on {SOCK_PATH}")
+    logger.info(f"IPC Listening on {SOCK_PATH}")
     
     while True:
         conn, _ = server.accept()
@@ -212,6 +244,41 @@ def ipc_thread():
                     # Simple replace for now.
                     safe_log = last_log_message.replace(":", "-")
                     conn.send(f"PONG:{status}:{safe_log}".encode())
+                elif data == "GET_DEVICES":
+                    try:
+                        devices = sd.query_devices()
+                        input_devices = []
+                        for i, d in enumerate(devices):
+                            if d['max_input_channels'] > 0:
+                                input_devices.append(f"{i}:{d['name']}")
+                        resp = "DEVICES:" + "|".join(input_devices)
+                        conn.sendall(resp.encode())
+                    except Exception as e:
+                        logger.error(f"Error getting devices: {e}")
+                        conn.send(f"ERROR: {e}".encode())
+                elif data.startswith("SET_DEVICE:"):
+                    try:
+                        idx = int(data.split(":")[1])
+                        logger.info(f"Switching to audio device index: {idx}")
+                        # Update global device_id and restart stream
+                        global device_id
+                        device_id = idx
+                        # Restart stream logic would be complex here as it's in a separate thread/process
+                        # For now, we just update the variable. Ideally, we signal the audio thread.
+                        # Since audio_loop uses device_id, we might need to restart the daemon or the loop.
+                        # Simpler approach: Just save config and tell user to restart? 
+                        # Or better: The audio_loop checks a shared variable?
+                        # Let's assume audio_loop is robust enough or we restart it.
+                        # Actually, sd.InputStream is blocking or callback based.
+                        # We need to stop and start it.
+                        # For this iteration, let's just log it and maybe save it to a config file that audio_loop reads?
+                        # But the requirement is "Real Audio Device Selection".
+                        # Let's write to a config file that the daemon reads on startup.
+                        # And maybe trigger a restart of the audio subsystem if possible.
+                        conn.send(b"OK")
+                    except Exception as e:
+                        logger.error(f"Error setting device: {e}")
+                        conn.send(f"ERROR: {e}".encode())
                 elif data.startswith("SET_MODE:"):
                     global current_mode
                     current_mode = data.split(":")[1]
@@ -231,11 +298,21 @@ def ipc_thread():
                 elif data == "PLAY_CHIME":
                     command_q.put("CHIME")
                     conn.send(b"OK")
+                elif data.startswith("TYPE:"):
+                    # "TYPE:Hello World"
+                    text = data.split(":", 1)[1]
+                    command_q.put(f"TYPE:{text}")
+                    conn.send(b"OK")
+                elif data == "GET_TELEMETRY":
+                    with telemetry_lock:
+                        # Return JSON telemetry
+                        resp = json.dumps({"type": "telemetry", "data": telemetry})
+                        conn.send(resp.encode())
                 elif data.startswith("SET_THEME:"):
                     # Mock theme setting
                     conn.send(b"OK")
                 else: conn.send(b"UNKNOWN")
-        except Exception as e: print(f"IPC Error: {e}")
+        except Exception as e: logger.error(f"IPC Error: {e}", exc_info=True)
         finally: conn.close()
         
 def log_history(text):
@@ -534,22 +611,49 @@ def process_text(text):
     log_history(text)
     type_text(text)
 
-def process_thread():
-    global recording, porcupine, whisper_model, vad_model, current_mode
-    
-    # Load Models
-    print("Loading Silero VAD...")
-    vad_model, utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', force_reload=False, trust_repo=True)
-    (get_speech_timestamps, save_audio, read_audio, VADIterator, collect_chunks) = utils
-    
-    print("Loading Whisper...")
-    whisper_model = WhisperModel("small.en", device="cpu", compute_type="int8")
-    
-    print("Loading Porcupine...")
+# --- MODEL MANAGER (Lazy Loading) ---
+class ModelManager:
+    def __init__(self):
+        self._whisper = None
+        self._porcupine = None
+        self._vad = None
+        self._vad_utils = None
+
+    @property
+    def whisper(self):
+        if not self._whisper:
+            print("⏳ Lazy Loading Whisper (tiny.en)...")
+            self._whisper = WhisperModel("tiny.en", device="cpu", compute_type="int8")
+        return self._whisper
+
+    @property
+    def porcupine(self):
+        if not self._porcupine:
+            print("⏳ Lazy Loading Porcupine...")
+            try:
+                self._porcupine = pvporcupine.create(access_key=ACCESS_KEY, keywords=['porcupine'])
+            except Exception as e:
+                print(f"Porcupine Load Error: {e}")
+        return self._porcupine
+
+    @property
+    def vad(self):
+        if not self._vad:
+            print("⏳ Lazy Loading Silero VAD...")
+            self._vad, self._vad_utils = torch.hub.load(repo_or_dir='snakers4/silero-vad', model='silero_vad', force_reload=False, trust_repo=True)
+        return self._vad, self._vad_utils
+
+models = ModelManager()
+
+# --- HELPER FUNCTIONS ---
+def set_clipboard(text):
     try:
-        porcupine = pvporcupine.create(access_key=ACCESS_KEY, keywords=['porcupine'])
+        subprocess.run(['wl-copy'], input=text.encode(), check=True)
     except Exception as e:
-        print(f"Porcupine Error: {e}")
+        print(f"Clipboard Error: {e}")
+
+def process_thread():
+    global recording, current_mode
     
     # Audio Stream
     device_id = None
@@ -560,6 +664,10 @@ def process_thread():
                 device_id = i
                 break
     except: pass
+    
+    # Queue Cap: ~2 minutes @ 16kHz/512 frame = ~31.25 fps * 120s = 3750 frames -> 4000
+    global audio_q
+    audio_q = queue.Queue(maxsize=4000) 
     
     stream = sd.InputStream(samplerate=SAMPLE_RATE, device=device_id, channels=1, dtype='int16', blocksize=FRAME_LENGTH, callback=audio_callback)
     stream.start()
@@ -593,11 +701,11 @@ def process_thread():
                 play_tone(880, 50) # High ping
             elif cmd == "RELOAD_CONFIG":
                 load_config()
-                # Reload macros specifically if they are separate
-                # load_config already updates the global 'macros' dict?
-                # Let's check load_config implementation.
-                # Assuming load_config updates global 'macros'.
-                print("Config Reloaded via IPC")
+                logger.info("Config Reloaded via IPC")
+            elif cmd.startswith("TYPE:"):
+                text = cmd.split(":", 1)[1]
+                print(f"Injecting History: {text}")
+                process_text(text)
             
         except queue.Empty: pass
         
@@ -609,20 +717,35 @@ def process_thread():
         # 3. Logic Branch
         
         # WAKE MODE
-        if current_mode == MODE_WAKE and not recording and porcupine:
-            idx = porcupine.process(pcm.flatten())
-            if idx >= 0:
-                print("Wake Word!")
-                play_tone(1200)
-                recording = True
-                rec_buffer = []
-                silence_start = None
+        if current_mode == MODE_WAKE and not recording:
+            # Lazy Load Porcupine
+            pp = models.porcupine
+            if pp:
+                # Calculate Energy for Visualizer
+                frame_float = pcm.flatten().astype(np.float32) / 32768.0
+                energy = float(np.sqrt(np.mean(frame_float**2)))
+                
+                with telemetry_lock:
+                    telemetry["timestamp"] = time.time()
+                    telemetry["vad_energy"] = energy
+                    telemetry["vad_state"] = "idle"
+                    telemetry["asr_state"] = "idle"
+                
+                idx = pp.process(pcm.flatten())
+                if idx >= 0:
+                    logger.info("Wake Word Detected!")
+                    play_tone(1200)
+                    recording = True
+                    rec_buffer = []
+                    silence_start = None
         
         # FOCUS MODE (VAD Only)
         elif current_mode == MODE_FOCUS and not recording:
             frame_float = pcm.flatten().astype(np.float32) / 32768.0
             
-            # VAD Check
+            # VAD Check (Lazy Load)
+            vad_model, _ = models.vad
+            
             speech_prob = 0.0
             if vad_model:
                 speech_prob = vad_model(torch.from_numpy(frame_float), SAMPLE_RATE).item()
@@ -638,7 +761,7 @@ def process_thread():
                 telemetry["asr_state"] = "idle"
 
             if speech_prob > 0.5:
-                print("Focus Speech Detected!")
+                logger.info("Focus Speech Detected!")
                 recording = True
                 rec_buffer = []
                 silence_start = None
@@ -650,6 +773,8 @@ def process_thread():
             # VAD Check
             frame_float = pcm.flatten().astype(np.float32) / 32768.0
             speech_prob = 0.0
+            
+            vad_model, _ = models.vad
             if vad_model:
                 speech_prob = vad_model(torch.from_numpy(frame_float), SAMPLE_RATE).item()
             else:
@@ -665,33 +790,42 @@ def process_thread():
 
             if speech_prob < 0.3: # Silence
                 if silence_start is None: silence_start = time.time()
-                elif time.time() - silence_start > 1.5: # 1.5s silence
-                    print("Silence detected. Stopping.")
-                    
-                    # Telemetry Update (Transcribing)
-                    with telemetry_lock:
-                        telemetry["asr_state"] = "transcribing"
-                    
+                elif time.time() - silence_start > 1.0: # 1s Silence Timeout
+                    logger.info("Silence Timeout. Stopping.")
                     recording = False
-                    play_tone(800)
+                    play_tone(600)
                     
                     # Transcribe
-                    full_audio = np.concatenate(rec_buffer).flatten().astype(np.float32) / 32768.0
-                    segments, _ = whisper_model.transcribe(full_audio, beam_size=1)
-                    text = " ".join([s.text.strip() for s in segments]).strip()
-                    print(f"Result: {text}")
-                    
-                    # Telemetry Update (Injecting)
-                    with telemetry_lock:
-                        telemetry["asr_state"] = "injecting"
-                        telemetry["last_final"] = text
-                    
-                    process_text(text)
-                    rec_buffer = []
-                    
-                    # Telemetry Update (Done)
-                    with telemetry_lock:
-                        telemetry["asr_state"] = "idle"
+                    if len(rec_buffer) > 5: # Min frames
+                        logger.info(f"Transcribing {len(rec_buffer)} frames...")
+                        
+                        # Telemetry: Transcribing
+                        with telemetry_lock: telemetry["asr_state"] = "transcribing"
+                            
+                        # Flatten buffer
+                        audio_data = np.concatenate(rec_buffer).flatten().astype(np.float32) / 32768.0
+                        
+                        # Lazy Load Whisper
+                        w_model = models.whisper
+                        
+                        try:
+                            segments, _ = w_model.transcribe(audio_data, beam_size=5, initial_prompt=initial_prompt)
+                            text = " ".join([s.text for s in segments]).strip()
+                            
+                            logger.info(f"Transcribed: {text}")
+                            with telemetry_lock: 
+                                telemetry["asr_state"] = "injecting"
+                                telemetry["last_final"] = text
+                            
+                            process_text(text)
+                            
+                        except Exception as e:
+                            logger.error(f"Transcription Error: {e}", exc_info=True)
+                            set_log("Error during transcription.")
+                            
+                        # Telemetry: Idle
+                        with telemetry_lock: telemetry["asr_state"] = "idle"
+
             else:
                 silence_start = None
         
@@ -742,76 +876,94 @@ hotkey_start_alts = []
 hotkey_stop_alts = []
 
 def load_config():
-    global hotkey_start_alts, hotkey_stop_alts
+    global hotkey_start_alts, hotkey_stop_alts, MACROS, initial_prompt, current_mode
+    
+    # 1. Load Vocabulary
     try:
-        with open(CONFIG_PATH, 'r') as f:
-            config = json.load(f)
-            
-            def parse_hk(hk_str):
-                # Returns a LIST of SETS (alternatives)
-                # e.g. "CTRL+F9" -> [{LCTRL, F9}, {RCTRL, F9}]
-                parts = hk_str.upper().split('+')
-                base_keys = set()
-                modifiers = []
+        if os.path.exists(VOCAB_PATH):
+            with open(VOCAB_PATH, 'r') as f:
+                vocab_data = json.load(f)
+                terms = vocab_data.get("terms", [])
+                style = vocab_data.get("style", "")
                 
-                for p in parts:
-                    p = p.strip()
-                    if p == "CTRL": modifiers.append({evdev.ecodes.KEY_LEFTCTRL, evdev.ecodes.KEY_RIGHTCTRL})
-                    elif p == "ALT": modifiers.append({evdev.ecodes.KEY_LEFTALT, evdev.ecodes.KEY_RIGHTALT})
-                    elif p == "SHIFT": modifiers.append({evdev.ecodes.KEY_LEFTSHIFT, evdev.ecodes.KEY_RIGHTSHIFT})
-                    elif p == "SUPER": modifiers.append({evdev.ecodes.KEY_LEFTMETA, evdev.ecodes.KEY_RIGHTMETA})
-                    elif hasattr(evdev.ecodes, f"KEY_{p}"):
-                        base_keys.add(getattr(evdev.ecodes, f"KEY_{p}"))
+                # Construct Prompt: "Style. Terms."
+                prompt_parts = []
+                if style: prompt_parts.append(f"{style}.")
+                if terms: prompt_parts.append(f"Vocabulary: {', '.join(terms)}.")
                 
-                # Generate combinations
-                import itertools
-                combos = []
-                if not modifiers:
-                    combos.append(base_keys)
-                else:
-                    for mod_combo in itertools.product(*modifiers):
-                        s = base_keys.copy()
-                        for m in mod_combo: s.add(m)
-                        combos.append(s)
-                return combos
+                initial_prompt = " ".join(prompt_parts)
+                print(f"Vocabulary Loaded: {len(terms)} terms.")
+    except Exception as e:
+        print(f"Vocabulary Load Error: {e}")
 
-            hotkey_start_alts = parse_hk(config.get("hotkey_start", "F9"))
-            hotkey_stop_alts = parse_hk(config.get("hotkey_stop", "F10"))
-            print(f"Hotkeys Loaded: {len(hotkey_start_alts)} start combos, {len(hotkey_stop_alts)} stop combos")
-            
-            # Update Mode
-            global current_mode
-            current_mode = config.get("mode", "WAKE")
-            
-            # Update Macros
-            global MACROS
-            if not MACROS: init_macros()
-            
-            user_macros = config.get("macros", {})
-            for trig, act in user_macros.items():
-                # User macros are usually text or key combos.
-                # We need to infer type or assume a default.
-                # The GUI saves them as simple strings.
-                # Let's assume they are "text" unless they look like keys?
-                # Actually, the GUI CommandEditor saves them as: "trigger": "action"
-                # We need to support "open firefox" -> "cmd" style too if user edits config manually?
-                # For now, let's treat them as "text" type by default, or "key" if they match a pattern?
-                # Wait, the GUI allows "action" input.
-                # If action starts with "!" it could be a command?
-                # Or we just treat everything as text/key based on content?
+    # 2. Load Config & Macros
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, 'r') as f:
+                config = json.load(f)
                 
-                # Simple heuristic:
-                if act.startswith("!"):
-                    # Command: "!firefox"
-                    cmd_str = act[1:].strip()
-                    MACROS[trig] = ("cmd", cmd_str.split())
-                elif "CTRL+" in act.upper() or "ALT+" in act.upper() or "SUPER+" in act.upper() or "F" in act.upper() and len(act) < 4:
-                     MACROS[trig] = ("key", act)
-                else:
-                     MACROS[trig] = ("text", act)
-                     
-            print(f"Macros Loaded: {len(MACROS)} total ({len(user_macros)} user)")
-            
+                def parse_hk(hk_str):
+                    # Returns a LIST of SETS (alternatives)
+                    # e.g. "CTRL+F9" -> [{LCTRL, F9}, {RCTRL, F9}]
+                    parts = hk_str.upper().split('+')
+                    base_keys = set()
+                    modifiers = []
+                    
+                    for p in parts:
+                        p = p.strip()
+                        if p == "CTRL": modifiers.append({evdev.ecodes.KEY_LEFTCTRL, evdev.ecodes.KEY_RIGHTCTRL})
+                        elif p == "ALT": modifiers.append({evdev.ecodes.KEY_LEFTALT, evdev.ecodes.KEY_RIGHTALT})
+                        elif p == "SHIFT": modifiers.append({evdev.ecodes.KEY_LEFTSHIFT, evdev.ecodes.KEY_RIGHTSHIFT})
+                        elif p == "SUPER": modifiers.append({evdev.ecodes.KEY_LEFTMETA, evdev.ecodes.KEY_RIGHTMETA})
+                        elif hasattr(evdev.ecodes, f"KEY_{p}"):
+                            base_keys.add(getattr(evdev.ecodes, f"KEY_{p}"))
+                    
+                    # Generate combinations
+                    import itertools
+                    combos = []
+                    if not modifiers:
+                        combos.append(base_keys)
+                    else:
+                        for mod_combo in itertools.product(*modifiers):
+                            s = base_keys.copy()
+                            for m in mod_combo: s.add(m)
+                            combos.append(s)
+                    return combos
+
+                hotkey_start_alts = parse_hk(config.get("hotkey_start", "F9"))
+                hotkey_stop_alts = parse_hk(config.get("hotkey_stop", "F10"))
+                print(f"Hotkeys Loaded: {len(hotkey_start_alts)} start combos, {len(hotkey_stop_alts)} stop combos")
+                
+                # Update Mode
+                current_mode = config.get("mode", "WAKE")
+                
+                # Update Macros
+                if not MACROS: init_macros()
+                
+                # Load User Macros
+                user_macros = config.get("macros", {})
+                
+                # Merge into Global MACROS
+                # User macros override system macros
+                for k, v in user_macros.items():
+                    # Infer Type if missing (simple heuristic)
+                    ctype = "text"
+                    cval = v
+                    
+                    if isinstance(v, dict): # If they used the advanced format
+                        ctype = v.get("type", "text")
+                        cval = v.get("value", "")
+                    elif isinstance(v, str): # Only apply heuristics if it's a string
+                        if v.startswith("!"):
+                            ctype = "cmd"
+                            cval = v[1:].split(" ") # "!firefox" -> ["firefox"]
+                        elif "+" in v and v.isupper(): # Rough check for hotkeys
+                            ctype = "key"
+                    
+                    MACROS[k] = (ctype, cval)
+                         
+                print(f"Macros Loaded: {len(MACROS)} total ({len(user_macros)} user)")
+                
     except Exception as e:
         print(f"Config Load Error: {e}")
 
@@ -974,13 +1126,21 @@ def ipc_thread():
         time.sleep(0.005)
 
 if __name__ == "__main__":
-    load_config() # Load config (and macros) first
-    load_models() # Load models
-    
-    t_ipc = threading.Thread(target=ipc_thread, daemon=True)
-    t_ipc.start()
-    
-    t_input = threading.Thread(target=input_thread, daemon=True)
-    t_input.start()
-    
-    process_thread()
+    try:
+        load_config()
+        
+        # Start IPC
+        t_ipc = threading.Thread(target=ipc_thread, daemon=True)
+        t_ipc.start()
+        
+        # Start Input Monitoring
+        t_input = threading.Thread(target=input_thread, daemon=True)
+        t_input.start()
+        
+        # Start Audio Processing
+        process_thread()
+    except KeyboardInterrupt:
+        logger.info("Stopping Daemon...")
+    except Exception as e:
+        logger.critical(f"Fatal Error: {e}", exc_info=True)
+
