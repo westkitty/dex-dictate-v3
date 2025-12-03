@@ -1,0 +1,1 @@
+{"mode": "WAKE", "sensitivity": 0.7, "hotkey_start": "'+CTRL", "hotkey_stop": "CTRL+\\", "theme_accent": "#00C8FF", "macros": {}, "vad_tail": 1.5, "vad_silence_timeout": 5.0, "theme_bg": "OLED Black"}

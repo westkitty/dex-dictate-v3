@@ -1,0 +1,317 @@
+/* STARSILK AESTHETIC SPECIFICATION */
+
+/* Global Reset */
+QWidget {
+    background-color: {{BACKGROUND}};
+    color: #29A2FF;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 12px;
+    selection-background-color: {{ACCENT}};
+    selection-color: {{BACKGROUND}};
+}
+
+/* Main Window */
+QMainWindow {
+    background-color: {{BACKGROUND}};
+}
+
+/* Headers */
+QLabel#HeaderLabel {
+    font-size: 18px;
+    font-weight: bold;
+    color: {{ACCENT_BRIGHT}};
+    padding: 10px;
+}
+
+QLabel#SectionLabel {
+    font-size: 14px;
+    font-weight: bold;
+    color: {{ACCENT}};
+    border-bottom: 1px solid {{ACCENT_DIM}};
+    padding-bottom: 5px;
+    margin-top: 10px;
+}
+
+/* Buttons */
+QPushButton {
+    background-color: {{BACKGROUND_ALT}};
+    color: #29A2FF;
+    border: 1px solid {{ACCENT}};
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    background-color: {{ACCENT_DIM}};
+    border: 1px solid {{ACCENT_BRIGHT}};
+    color: {{ACCENT_BRIGHT}};
+}
+
+QPushButton:pressed {
+    background-color: {{ACCENT_DIM}};
+    border: 1px solid {{ACCENT}};
+}
+
+QPushButton:disabled {
+    color: #555555;
+    border: 1px solid #333333;
+}
+
+/* Segmented Control (Simulated with Radio Buttons) */
+QRadioButton {
+    background-color: {{BACKGROUND_ALT}};
+    color: #555;
+    padding: 8px;
+    border: 1px solid #333;
+    border-radius: 0px;
+}
+
+QRadioButton:checked {
+    background-color: {{ACCENT_DIM}};
+    color: {{ACCENT}};
+    border: 1px solid {{ACCENT}};
+}
+
+QRadioButton:hover {
+    color: {{ACCENT_BRIGHT}};
+}
+
+/* Sliders */
+QSlider::groove:horizontal {
+    border: 1px solid #333;
+    height: 4px;
+    background: {{BACKGROUND_ALT}};
+    margin: 2px 0;
+}
+
+QSlider::handle:horizontal {
+    background: {{ACCENT}};
+    border: 1px solid {{ACCENT}};
+    width: 12px;
+    height: 12px;
+    margin: -5px 0;
+    border-radius: 6px;
+}
+
+QSlider::handle:horizontal:hover {
+    background: {{ACCENT_BRIGHT}};
+}
+
+/* Text Fields */
+QLineEdit, QTextEdit, QPlainTextEdit {
+    background-color: {{BACKGROUND_ALT}};
+    color: #29A2FF;
+    border: 1px solid #333;
+    border-radius: 2px;
+    padding: 4px;
+}
+
+QLineEdit:focus, QTextEdit:focus, QPlainTextEdit:focus {
+    border: 1px solid {{ACCENT}};
+    background-color: {{BACKGROUND_ALT}};
+}
+
+/* Log Window */
+QTextEdit#LogWindow {
+    background-color: {{BACKGROUND}};
+    color: #00FF6A;
+    border: 1px solid #333;
+    font-family: "JetBrains Mono", monospace;
+}
+
+/* Status Bar */
+QStatusBar {
+    background-color: {{BACKGROUND}};
+    color: #555;
+    border-top: 1px solid {{ACCENT}};
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    border: none;
+    background: {{BACKGROUND}};
+    width: 10px;
+    margin: 0px 0px 0px 0px;
+}
+QScrollBar::handle:vertical {
+    background: #333;
+    min-height: 20px;
+    border-radius: 5px;
+}
+QScrollBar::handle:vertical:hover {
+    background: {{ACCENT}};
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+/* --- NEW STARSILK COMPONENTS --- */
+
+/* Audio Visualizer */
+QWidget#AudioVisualizer {
+    background-color: {{BACKGROUND}};
+    border: 1px solid {{ACCENT_DIM}};
+    border-radius: 4px;
+}
+
+/* Tooltips */
+QToolTip {
+    background-color: {{BACKGROUND_ALT}};
+    color: #29A2FF;
+    border: 1px solid {{ACCENT}};
+    font-family: "JetBrains Mono", monospace;
+    padding: 4px;
+}
+
+/* Status Chip */
+QLabel#StatusChip {
+    background-color: {{BACKGROUND}};
+    border: 1px solid {{ACCENT}};
+    border-radius: 10px;
+    padding: 2px 8px;
+    font-weight: bold;
+    font-size: 10px;
+}
+
+/* Top Bar Widget */
+QWidget#TopBarWidget {
+    background-color: {{BACKGROUND_ALT}};
+    border-bottom: 1px solid {{ACCENT}};
+}
+
+QLabel#BarLogo {
+    font-family: "Segoe UI", sans-serif;
+    font-weight: bold;
+    color: {{ACCENT}};
+}
+
+QLabel#BarStatus {
+    font-family: "JetBrains Mono", monospace;
+    color: #888;
+}
+
+QPushButton#BarModeButton {
+    background-color: transparent;
+    border: 1px solid #333;
+    border-radius: 4px;
+    padding: 4px 12px;
+    color: #888;
+    font-size: 11px;
+}
+
+QPushButton#BarModeButton:checked {
+    background-color: {{BACKGROUND_ALT}};
+    border: 1px solid {{ACCENT}};
+    color: {{ACCENT}};
+}
+
+/* Sliding Drawer */
+QWidget#SlidingDrawer {
+    background-color: {{BACKGROUND}};
+    border-left: 1px solid {{ACCENT_DIM}};
+    border-right: 1px solid {{ACCENT_DIM}};
+}
+
+/* History List */
+QListWidget#HistoryList {
+    background-color: {{BACKGROUND}};
+    border: 1px solid #333;
+    color: #ccc;
+    font-family: "JetBrains Mono", monospace;
+}
+
+QPushButton#ModeButton:hover {
+    background-color: #151515;
+    color: #FFF;
+}
+
+/* Navigation Sidebar */
+QListWidget#NavSidebar {
+    background-color: {{BACKGROUND_ALT}};
+    border: none;
+    outline: none;
+    font-size: 12px;
+    color: #888;
+}
+
+QListWidget#NavSidebar::item {
+    height: 40px;
+    padding-left: 10px;
+    border-left: 3px solid transparent;
+}
+
+QListWidget#NavSidebar::item:selected {
+    background-color: #111;
+    color: {{ACCENT}};
+    border-left: 3px solid {{ACCENT}};
+}
+
+QListWidget#NavSidebar::item:hover {
+    background-color: #111;
+    color: #FFF;
+}
+
+/* Inspector */
+QTextEdit {
+    background-color: {{BACKGROUND_ALT}};
+    border: 1px solid #222;
+    border-radius: 4px;
+}
+
+/* Top Bar Widget */
+QWidget#TopBarWidget {
+    background-color: {{BACKGROUND}};
+    border-bottom: 1px solid #333;
+}
+
+QLabel#TopBarStatus {
+    font-weight: bold;
+}
+
+/* Floating Widget */
+QWidget#FloatingWidget {
+    background-color: {{BACKGROUND}};
+    border: 1px solid {{ACCENT}};
+    border-radius: 8px;
+}
+
+/* Hotkey Input States */
+QLineEdit[state="valid"] { border: 1px solid {{ACCENT}}; color: {{ACCENT}}; }
+QLineEdit[state="conflict"] { border: 1px solid #D96F30; color: #D96F30; }
+QLineEdit[state="invalid"] { border: 1px solid #B33232; color: #B33232; }
+QLineEdit[state="recording"] { border: 1px solid {{ACCENT_BRIGHT}}; background-color: {{ACCENT_DIM}}; }
+
+/* History Window */
+QTableWidget {
+    background-color: {{BACKGROUND}};
+    gridline-color: #333;
+    color: #29A2FF;
+}
+QHeaderView::section {
+    background-color: {{BACKGROUND_ALT}};
+    color: {{ACCENT_BRIGHT}};
+    border: 1px solid #333;
+    padding: 4px;
+}
+
+/* Focus Panel (Visual Feedback) */
+QFrame#focusPanel[mode="idle"] {
+    border: 1px solid #444444;
+    background-color: {{BACKGROUND_ALT}};
+}
+
+QFrame#focusPanel[mode="listening"] {
+    border: 2px solid {{ACCENT}};
+    background-color: #151515;
+}
+
+QFrame#focusPanel[mode="transcribing"] {
+    border: 2px solid {{ACCENT_BRIGHT}};
+    background-color: #101020;
+}
+
+QFrame#focusPanel[mode="injecting"] {
+    border: 2px solid #ff00ff;
+    background-color: #200020;
+}

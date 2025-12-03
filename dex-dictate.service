@@ -1,0 +1,12 @@
+[Unit]
+Description=Dex Dictate v3 Daemon
+After=network.target sound.target
+
+[Service]
+# Updated Path for EXT4 Workspace
+ExecStart=/home/andrew-dolby/DAO_Linux_Workspace/Projects/dex-dictate-v3/run_daemon.sh
+Restart=always
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+
+[Install]
+WantedBy=default.target
