@@ -1,0 +1,20 @@
+#!/bin/bash
+# Self-healing runner for Dex Dictate v3
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+LOG_FILE="$DIR/logs/runner.log"
+
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1" | tee -a "$LOG_FILE"
+}
+
+log "Starting Dex Dictate Self-Healing Runner..."
+
+while true; do
+    log "Launching Rescue Script..."
+    $DIR/run_rescue.sh
+    
+    EXIT_CODE=$?
+    log "Application exited with code $EXIT_CODE. Restarting in 2 seconds..."
+    sleep 2
+done

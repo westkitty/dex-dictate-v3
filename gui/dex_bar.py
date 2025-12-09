@@ -12,8 +12,10 @@ class DexBar(QWidget):
         super().__init__()
         self.state_manager = state_manager
         
-        # Window Flags: Frameless, Always on Top, Tool (no taskbar entry usually)
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        # Window Flags: Frameless, Always on Top, Tool
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool | Qt.X11BypassWindowManagerHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setAttribute(Qt.WA_TranslucentBackground)
         
         # Full width, fixed height
@@ -45,6 +47,7 @@ class DexBar(QWidget):
         self.btn_wake = self._create_mode_btn("WAKE WORD", "WAKE")
         self.btn_manual = self._create_mode_btn("MANUAL", "MANUAL")
         self.btn_focus = self._create_mode_btn("FOCUS (VAD)", "FOCUS")
+        self.btn_focus.setEnabled(False) # NIGHTTIME DISABLE
         
         layout.addWidget(self.btn_wake)
         layout.addWidget(self.btn_manual)

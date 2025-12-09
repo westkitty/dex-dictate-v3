@@ -59,6 +59,7 @@ class MainWindow(QMainWindow):
         self.state_manager.mode_changed.connect(self.on_mode_changed)
         self.state_manager.audio_level_changed.connect(self.update_audio)
         self.state_manager.config_changed.connect(self.on_config_changed)
+        self.state_manager.transcription_received.connect(self.on_transcription)
         
         # Initial State
         self.load_config()
@@ -125,6 +126,8 @@ class MainWindow(QMainWindow):
         self.btn_wake = QPushButton(Strings.MODE_WAKE)
         self.btn_manual = QPushButton(Strings.MODE_MANUAL)
         self.btn_focus = QPushButton(Strings.MODE_FOCUS)
+        self.btn_focus.setEnabled(False) # NIGHTTIME DISABLE
+        self.btn_focus.setStyleSheet("color: #555; border: 1px solid #333;")
         
         for btn in [self.btn_wake, self.btn_manual, self.btn_focus]:
             btn.setCheckable(True)
@@ -236,6 +239,14 @@ class MainWindow(QMainWindow):
         right_layout.setContentsMargins(20, 20, 20, 20)
         right_layout.setSpacing(10)
         
+        # Live Caption Box
+        right_layout.addWidget(self._create_section_label("Live Caption"))
+        self.caption_box = QTextEdit()
+        self.caption_box.setMaximumHeight(80)
+        self.caption_box.setReadOnly(True)
+        self.caption_box.setStyleSheet("font-size: 16px; color: #FFF; background: #222; border: 1px solid #444; padding: 10px;")
+        right_layout.addWidget(self.caption_box)
+
         # System Log
         right_layout.addWidget(self._create_section_label(Strings.HDR_SYS_LOG))
         self.log_window = QTextEdit()
@@ -303,6 +314,11 @@ class MainWindow(QMainWindow):
             if hasattr(self, 'settings_panel'):
                 self.settings_panel.update_device_list(devices_str)
 
+    def on_transcription(self, text):
+        self.log(f"📝 {text}")
+        if hasattr(self, 'caption_box'):
+            self.caption_box.setText(text)
+
     def update_status(self, state, extra):
         try:
             # Update Top Bar
@@ -351,6 +367,14 @@ class MainWindow(QMainWindow):
         self.btn_wake.setChecked(mode == "WAKE")
         self.btn_manual.setChecked(mode == "MANUAL")
         self.btn_focus.setChecked(mode == "FOCUS")
+        
+        # Apply Styling
+        active_style = f"background-color: {self.current_accent}; color: #000; font-weight: bold; border: none; border-radius: 4px;"
+        base_style = "background-color: #222; color: #FFF; border: 1px solid #444; border-radius: 4px;"
+        
+        self.btn_wake.setStyleSheet(active_style if mode == "WAKE" else base_style)
+        self.btn_manual.setStyleSheet(active_style if mode == "MANUAL" else base_style)
+        self.btn_focus.setStyleSheet(active_style if mode == "FOCUS" else base_style)
 
     def on_config_changed(self, config):
         # Reload relevant parts if needed
@@ -362,7 +386,8 @@ class MainWindow(QMainWindow):
         elif btn == self.btn_focus: mode = "FOCUS"
         
         self.state_manager.set_mode(mode)
-        self.request_daemon_cmd.emit(f"SET_MODE:{mode}")
+        self.state_manager.set_mode(mode)
+        self.request_daemon_cmd.emit(f"SET_CONFIG_MODE:{mode}")
         self.log(Strings.LOG_MODE_SET.format(mode))
 
     def set_sens(self):

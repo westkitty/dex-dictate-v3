@@ -1,12 +1,16 @@
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, QTimer
 import json
 import os
+import socket
+
+SOCK_FILE = f"/run/user/{os.getuid()}/dex3.sock"
 
 class StateManager(QObject):
     # Signals
-    status_changed = Signal(str, str) # state, extra (e.g. "CONNECTED", "REC")
-    mode_changed = Signal(str)        # "WAKE", "MANUAL", "FOCUS"
-    audio_level_changed = Signal(float) # 0.0 to 1.0
+    status_changed = Signal(str, str) # state, extra
+    mode_changed = Signal(str)
+    audio_level_changed = Signal(float)
+    transcription_received = Signal(str)
     config_changed = Signal(dict)
     
     _instance = None
@@ -21,15 +25,55 @@ class StateManager(QObject):
         super().__init__()
         self._initialized = True
         
-        # Default State
         self.status = "OFFLINE"
         self.extra_status = ""
         self.mode = "WAKE"
         self.audio_level = 0.0
         self.config = {}
         self.config_path = os.path.expanduser("~/.config/dex-dictate/config.json")
-        
         self.load_config()
+        
+        # Polling Timer
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.poll_daemon)
+        self.timer.start(500)
+
+    def poll_daemon(self):
+        try:
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.settimeout(0.05)
+            client.connect(SOCK_FILE)
+            client.send(json.dumps({"cmd": "GET_STATUS"}).encode())
+            data = client.recv(1024).decode()
+            client.close()
+            
+            if data:
+                resp = json.loads(data)
+                self.set_status("CONNECTED", resp.get("status", "IDLE"))
+                
+                # Sync Mode (User Preference)
+                config_mode = resp.get("config_mode", "WAKE")
+                if config_mode != self.mode:
+                    self.mode = config_mode
+                    self.mode_changed.emit(self.mode)
+                
+                last_text = resp.get("last_text", "")
+                if last_text and last_text != getattr(self, 'last_seen_text', ""):
+                    self.last_seen_text = last_text
+                    self.transcription_received.emit(last_text)
+        except:
+            self.set_status("OFFLINE", "")
+
+    def send_cmd(self, cmd, mode=None):
+        try:
+            client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            client.connect(SOCK_FILE)
+            msg = {"cmd": cmd}
+            if mode: msg["mode"] = mode
+            client.send(json.dumps(msg).encode())
+            client.close()
+        except Exception as e:
+            print(f"Command Failed: {e}")
 
     def set_status(self, status, extra=""):
         if self.status != status or self.extra_status != extra:
@@ -41,38 +85,17 @@ class StateManager(QObject):
         if self.mode != mode:
             self.mode = mode
             self.mode_changed.emit(mode)
-            # Also update config? Or wait for explicit save?
-            # Usually mode is session-based, but we might want to persist it.
-            # Let's persist it.
-            self.config['mode'] = mode
-            self.save_config()
+            self.send_cmd("SET_MODE", mode)
 
-    def update_audio(self, level):
-        # Throttle? Or just emit.
-        # Let UI handle throttling if needed.
-        self.audio_level = level
-        self.audio_level_changed.emit(level)
+    def get_config(self, key, default=None):
+        return self.config.get(key, default)
 
     def load_config(self):
         try:
             if os.path.exists(self.config_path):
                 with open(self.config_path, 'r') as f:
                     self.config = json.load(f)
-            else:
-                self.config = {
-                    "mode": "WAKE",
-                    "theme": "OLED Black",
-                    "accent": "#00C8FF",
-                    "sensitivity": 50,
-                    "macros": {},
-                    "audio_device": 0
-                }
-            
-            # Apply loaded mode
-            self.mode = self.config.get("mode", "WAKE")
-            
-        except Exception as e:
-            print(f"Error loading config: {e}")
+        except: pass
 
     def save_config(self):
         try:
@@ -80,12 +103,4 @@ class StateManager(QObject):
             with open(self.config_path, 'w') as f:
                 json.dump(self.config, f, indent=4)
             self.config_changed.emit(self.config)
-        except Exception as e:
-            print(f"Error saving config: {e}")
-
-    def get_config(self, key, default=None):
-        return self.config.get(key, default)
-
-    def set_config(self, key, value):
-        self.config[key] = value
-        self.save_config()
+        except: pass
